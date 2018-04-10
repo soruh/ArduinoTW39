@@ -11,6 +11,26 @@
 #define MYWIFIPASSWORD "xxx"
 #define MYHOSTNAME "etelex"
 
+#define CENTRALEX
+
+#ifdef CENTRALEX
+  #define NUMBER_EEPROM 0x00
+  #define NUMBER_EEPROM_SIZE 0x10
+  #define PIN_EEPROM 0x10
+  #define PIN_EEPROM_SIZE 0x10
+  #define CENTRALEXHOST "telexgateway.de"
+  #define CENTRALEXPORT 8192
+  #define PINGINTERVAL 5000
+  #define PINGTIMEOUT 3000
+  #define TEXTBUFFERSIZE 8
+  #define CMDBUFFERSIZE 16
+  #define TEXT 0
+  #define CMD 1
+#endif
+
+#ifdef CENTRALEX
+  #undef _DEBUGPINGS
+#endif
 
 #define _DEBUG
 #undef _DEBUGTIMINGS
@@ -25,33 +45,33 @@
 
 
 #ifdef ESP8266
-#define ESP
+  #define ESP
 #else
-#define ICACHE_RAM_ATTR
+  #define ICACHE_RAM_ATTR
 #endif
 
 
 #ifdef ESP
-#include <ESP8266WiFi.h>
+  #include <ESP8266WiFi.h>
 #else // NOT ESP
-#include <Ethernet.h>
-#include <utility/w5100.h>
-#include <utility/socket.h>
-#define USE_SDCARD
+  #include <Ethernet.h>
+  #include <utility/w5100.h>
+  #include <utility/socket.h>
+  //#define USE_SDCARD
 #endif
 
 
 #ifdef USE_SDCARD
-#include <SD.h>
-#include <SPI.h>
+  #include <SD.h>
+  #include <SPI.h>
 #else
-/** Store and print a string in flash memory.*/
-#define PgmPrint(x) SerialPrint_P(PSTR(x))
-/** Store and print a string in flash memory followed by a CR/LF.*/
-#define PgmPrintln(x) SerialPrintln_P(PSTR(x))
+  /** Store and print a string in flash memory.*/
+  #define PgmPrint(x) SerialPrint_P(PSTR(x))
+  /** Store and print a string in flash memory followed by a CR/LF.*/
+  #define PgmPrintln(x) SerialPrintln_P(PSTR(x))
 
-extern  void SerialPrint_P(PGM_P str);
-extern  void SerialPrintln_P(PGM_P str);
+  extern  void SerialPrint_P(PGM_P str);
+  extern  void SerialPrintln_P(PGM_P str);
 #endif
 
 

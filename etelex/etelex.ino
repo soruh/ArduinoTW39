@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <EEPROM.h>
 #include "etelex.h"
 #include "baudot.h"
 #include "lookup.h"
@@ -42,6 +43,7 @@ const int SAMPLEPOS=60; // 60 von 120
 byte state;
 
 
+
 #define STATE_RUHEZUSTAND  0 //4ma  ump=0, ssr=0
 #define STATE_ANFANGSSIGNAL  10 //4ma -> 40 ma -> opto==1 ca. 1000ms delay
 #define STATE_WAHLAUFFORDERUNGSSIGNAL 20 //brk=1, 25ms delay
@@ -75,6 +77,22 @@ unsigned long st_timestamp;
 volatile unsigned int bit_pos=0; // aktuelles bit in rcve, startbit=1
 volatile boolean recieving=false;
 volatile unsigned long last_timestamp;
+
+#ifdef CENTRALEX
+
+boolean configuringNumber=false;
+boolean configuringPin=false;
+unsigned long lastPing;
+unsigned long awaiting_pong; //TODO implement client.stop if >= millis()-PINGTIMEOUT
+char ping[] = "\016ping;\017";
+boolean logged_in = false;
+boolean cmdMode = false;
+char textBuffer[TEXTBUFFERSIZE];
+char textBufferIndex = 0;
+char cmdBuffer[CMDBUFFERSIZE];
+char cmdBufferIndex = 0;
+char writeTo = TEXT;
+#endif
 
 void byte_send(byte _byte) {
   recieving=false;
@@ -138,7 +156,13 @@ void setup() {
   digitalWrite(SEND_PIN, LOW);
   digitalWrite(COMMUTATE_PIN, LOW);
 
-
+#ifdef CENTRALEX
+  Serial.println(sizeof(NUMBER_EEPROM));
+  Serial.println(sizeof(PIN_EEPROM));
+  // for(){
+  //   EEPROM.read(address)
+  // }
+#endif
   Serial.begin(115200);
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
@@ -170,7 +194,6 @@ void setup() {
   PgmPrintln("");
   PgmPrint("My IP address: ");
   Serial.println(WiFi.localIP());
-  server.begin();
 #else
    if (Ethernet.begin(mac) == 0) {
     PgmPrintln("Failed to configure Ethernet using DHCP");
@@ -186,9 +209,18 @@ void setup() {
     PgmPrint(".");
   }
 Serial.println();
-  server.begin();
 #endif
 
+#ifdef CENTRALEX
+  Serial.print("connecting to centralex server...");
+  if(client.connect(CENTRALEXHOST,CENTRALEXPORT)){
+    Serial.println("success!");
+  }else{
+    Serial.println("failed!");
+  }
+#else
+  server.begin();
+#endif
 
 
 
@@ -247,8 +279,149 @@ void handleClientsWhileConnected(){ //check for new clients which try to connect
 #endif
 }
 
-void loop() {
 
+void loop() {
+#ifdef CENTRALEX
+  if(!client.connected()){//TODO retry timeout
+    logged_in = false;
+    client.stop();
+    PgmPrint("centralex server ended;reconnecting...");
+    if(client.connect(CENTRALEXHOST,CENTRALEXPORT)){
+      PgmPrintln("success!");
+    }else{
+      PgmPrintln("failed!");
+      delay(5000);
+    }
+  }else{
+    if(logged_in==false){//TODO retry timeout
+      PgmPrintln("logging in");
+      //char login[] = {14,'l','i',':','2','2','2','2','2',',','1','2','3','4',';',15};
+      //client.print(login);
+      client.print("\016li:");
+      for(byte address = NUMBER_EEPROM;address<NUMBER_EEPROM+NUMBER_EEPROM_SIZE;address++){
+        byte value=EEPROM.read(address);
+        if(value==0x00){
+          break;
+        }else if(value==0xFF&&address==NUMBER_EEPROM){
+          Serial.println("number is not configured");
+          break;
+        }else{
+          Serial.print((int)value);
+          Serial.print(" -> ");
+          Serial.println((char)value);
+          client.print((char)value);
+        }
+      }
+      client.print(",");
+      Serial.print(",");
+      for(byte address = PIN_EEPROM;address<PIN_EEPROM+PIN_EEPROM_SIZE;address++){
+        byte value=EEPROM.read(address);
+        if(value==0x00){
+          break;
+        }else if(value==0xFF&&address==PIN_EEPROM){
+          Serial.println("pin is not configured");
+          break;
+        }else{
+          Serial.print((int)value);
+          Serial.print(" -> ");
+          Serial.println((char)value);
+          client.print((char)value);
+        }
+      }
+      client.print(";\017");
+      logged_in = true; //TODO check if logged in packet is recieved
+    }
+    if((awaiting_pong == 0)&&(millis()-lastPing>=PINGINTERVAL)){
+#ifdef _DEBUG
+#ifdef _DEBUGPINGS
+      Serial.println();
+      PgmPrint("sending ping at ");
+      Serial.print(millis()/1000);
+      Serial.println("sec");
+#endif
+#endif
+      client.print(ping);
+      awaiting_pong = millis();
+      lastPing = millis();
+    }
+    if(client.available()>0){
+      char c = client.read();
+      if(writeTo==CMD){
+        if((int)c==15){
+#ifdef _DEBUGPINGS
+          Serial.println("writeTo TEXT");
+#endif
+          writeTo=TEXT;
+        }else{
+          //Serial.print("cmdBuffer+=");
+          //Serial.println(c);
+          cmdBuffer[cmdBufferIndex++] = c;
+        }
+      }else if(writeTo==TEXT){
+        if((int)c==14){
+#ifdef _DEBUGPINGS
+          Serial.println("writeTo CMD");
+#endif
+          writeTo=CMD;
+        }else{
+          // Serial.print("textBuffer+=");
+          // Serial.println(c);
+          textBuffer[textBufferIndex++] = c;
+        }
+      }else{
+        if((int)c==15){
+          writeTo=TEXT;
+        }else if((int)c==14){
+          writeTo=CMD;
+        }else{
+          writeTo=TEXT;
+        }
+      }
+    }
+    if(cmdBufferIndex>0){
+      for(int i=0;i<cmdBufferIndex;i++){
+        if(cmdBuffer[i]==';'){
+#ifdef _DEBUGPINGS
+          Serial.print("cmdBuffer: ");
+          Serial.println(cmdBuffer);
+#endif
+          for(int k=0;k<i;k++){
+            if(cmdBuffer[k]==':'){
+              cmdBuffer[k]=0;
+              if(cmdBuffer[0]!=0){
+#ifdef _DEBUGPINGS
+                Serial.print("response code: ");
+                Serial.println(cmdBuffer);
+#endif
+                switch(String(cmdBuffer).toInt()){
+                  case 0:
+#ifdef _DEBUGPINGS
+                    Serial.println("got pong");
+#endif
+                    awaiting_pong=0;
+                    break;
+                  default:
+                    Serial.print("unknown response code: ");
+                    Serial.println(cmdBuffer[k]);
+                }
+              }
+              break;
+            }
+          }
+          for(int k=0;k<CMDBUFFERSIZE;k++){
+            if((k+i+1)<CMDBUFFERSIZE){
+              cmdBuffer[k]=cmdBuffer[k+i+1];
+            }else{
+              cmdBuffer[k]=0;
+            }
+          }
+          cmdBufferIndex-=(i+1);
+          break;
+        }
+      }
+    }
+  }
+#endif
   switch (state){
 
     case STATE_RUHEZUSTAND:
@@ -269,6 +442,7 @@ void loop() {
           }
         }
       }
+#ifndef CENTRALEX
       client = server.available();
       if (client) {
 #ifdef _DEBUG
@@ -281,6 +455,8 @@ void loop() {
         delay(1000);
         recieving=true;
       }//end client connecting
+#endif
+
     break;
 
     case STATE_ANFANGSSIGNAL:
@@ -390,16 +566,102 @@ void loop() {
 
 
    case STATE_WAHL_ENDE:
-      digitalWrite(SEND_PIN, LOW);
-      digitalWrite(COMMUTATE_PIN, LOW);
-      number[currentNumberPos]=0;
-#ifdef _DEBUG
-     PgmPrint("gewählte Nummer war: ");
-     Serial.println(number);
-#endif
-      state=STATE_LOOKUP;
+#ifdef CENTRALEX
+      Serial.print("configuringNumber: ");
+      Serial.println(configuringNumber);
+      Serial.print("configuringPin: ");
+      Serial.println(configuringPin);
+      if(configuringNumber||configuringPin){
+        if(configuringNumber){
+          Serial.print("configured number is:");
+          Serial.println(number);
+          if(currentNumberPos<=NUMBER_EEPROM_SIZE){
+            for(int i=0;i<NUMBER_EEPROM_SIZE;i++){
+              if(i<currentNumberPos){
+                EEPROM.write(NUMBER_EEPROM+i,number[i]);
+              }else{
+                EEPROM.write(NUMBER_EEPROM+i,0);
+              }
+            }
+            digitalWrite(COMMUTATE_PIN, HIGH);
+            delay(1000);
+            char str[] = "bitte eigenen pin waehlen\r\n";
+            for(int i=0;i<27;i++){
+              sendAsciiAsBaudot(str[i]);
+            }
+            delay(1000);
+            state=STATE_RUHEZUSTAND;
+            digitalWrite(SEND_PIN, LOW);
+            digitalWrite(COMMUTATE_PIN, LOW);
+            delay(1000);
+          }else{
 
-      recieving=true;
+          }
+          configuringNumber=false;
+        }else if(configuringPin){
+          Serial.print("configured pin is:");
+          Serial.println(number);
+          if(currentNumberPos<=PIN_EEPROM_SIZE){
+            for(int i=0;i<PIN_EEPROM_SIZE;i++){
+              if(i<currentNumberPos){
+                EEPROM.write(PIN_EEPROM+i,number[i]);
+              }else{
+                EEPROM.write(PIN_EEPROM+i,0);
+              }
+            }
+            logged_in = false;
+            digitalWrite(COMMUTATE_PIN, HIGH);
+            delay(1000);
+            char str[] = "configuration abgeschlossen.\r\n";
+            for(int i=0;i<30;i++){
+              sendAsciiAsBaudot(str[i]);
+            }
+            delay(1000);
+            state=STATE_RUHEZUSTAND;
+            digitalWrite(SEND_PIN, LOW);
+            digitalWrite(COMMUTATE_PIN, LOW);
+            delay(1000);
+          }else{
+
+          }
+          configuringPin=false;
+          for(int i=0;i<NUMBER_EEPROM_SIZE+PIN_EEPROM_SIZE+4;i++){
+            Serial.print((int)EEPROM.read(i));
+            Serial.print(", ");
+          }
+          Serial.print("");
+        }
+      }else{
+#endif
+        number[currentNumberPos]=0;
+#ifdef _DEBUG
+       PgmPrint("gewählte Nummer war: ");
+       Serial.println(number);
+#endif
+#ifdef CENTRALEX
+      if(currentNumberPos==1&&strncmp(number,"0",1)==0){ //if(currentNumberPos==<<str.length>>&&strncmp(number,<<str>>,<<str.length>>)==0){
+        Serial.println("starting configuring");
+        configuringPin = true;
+        configuringNumber = true;
+        digitalWrite(COMMUTATE_PIN, HIGH);
+        delay(1000);
+        char str[] = "bitte eigene nummer waehlen\r\n";
+        for(int i=0;i<30;i++){
+          sendAsciiAsBaudot(str[i]);
+        }
+        delay(1000);
+        state=STATE_RUHEZUSTAND;
+        digitalWrite(SEND_PIN, LOW);
+        digitalWrite(COMMUTATE_PIN, LOW);
+        delay(1000);
+      }else{
+#endif
+        state=STATE_LOOKUP;
+        recieving=true;
+#ifdef CENTRALEX
+      }
+    }
+#endif
     break;
 
 
@@ -656,12 +918,21 @@ if(bit_pos==1)noInterrupts();
     }
    }
 
-  if (client.available()) {
-        char c = client.read();
-
-        sendAsciiAsBaudot(c);
-        Serial.print(c);
-  }
+#ifdef CENTRALEX
+  if(textBufferIndex > 0){
+    char c = textBuffer[0];
+    for(int i=0;i<--textBufferIndex;i++){
+      textBuffer[i] = textBuffer[i+1];
+    }
+#else
+  if(client.available() > 0){
+    char c = client.read();
+#endif
+     Serial.print(c);
+     if(state==STATE_ONLINE||state==STATE_LOCALMODE){
+       sendAsciiAsBaudot(c);
+     }
+   }
 #ifndef ESP
   Ethernet.maintain();
 #endif
