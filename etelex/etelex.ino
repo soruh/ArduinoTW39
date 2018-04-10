@@ -155,14 +155,7 @@ void setup() {
 
   digitalWrite(SEND_PIN, LOW);
   digitalWrite(COMMUTATE_PIN, LOW);
-
-#ifdef CENTRALEX
-  Serial.println(sizeof(NUMBER_EEPROM));
-  Serial.println(sizeof(PIN_EEPROM));
-  // for(){
-  //   EEPROM.read(address)
-  // }
-#endif
+  
   Serial.begin(115200);
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
@@ -194,6 +187,9 @@ void setup() {
   PgmPrintln("");
   PgmPrint("My IP address: ");
   Serial.println(WiFi.localIP());
+#ifndef CENTRALEX
+  server.begin();
+#endif
 #else
    if (Ethernet.begin(mac) == 0) {
     PgmPrintln("Failed to configure Ethernet using DHCP");
@@ -209,6 +205,9 @@ void setup() {
     PgmPrint(".");
   }
 Serial.println();
+#ifndef CENTRALEX
+  server.begin();
+#endif
 #endif
 
 #ifdef CENTRALEX
@@ -656,6 +655,8 @@ void loop() {
         delay(1000);
       }else{
 #endif
+        digitalWrite(SEND_PIN, LOW);
+        digitalWrite(COMMUTATE_PIN, LOW);
         state=STATE_LOOKUP;
         recieving=true;
 #ifdef CENTRALEX
