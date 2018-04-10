@@ -8,7 +8,9 @@
 
 
 #ifdef ESP
+#ifndef CENTRALEX
 WiFiServer server(MYPORT);
+#endif
 WiFiClient client;
 #else
 // Enter a MAC address for your controller below.
@@ -19,7 +21,9 @@ byte mac[] = { MYMACADRESS };
 IPAddress ip(MYIPFALLBACK);
 // Initialize the Ethernet client library
 // with the IP address and port of the server
+#ifndef CENTRALEX
 EthernetServer server(MYPORT);
+#endif
 EthernetClient client;
 byte currentSocknum;
 #endif
